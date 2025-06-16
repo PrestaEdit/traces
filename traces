@@ -56,6 +56,7 @@ const REPOSITORIES_CATEGORIES = [
     ],
     'specs' => [
         'PrestaShop/prestashop-specs',
+        'PrestaShop/functional-documentation',
     ],
     'documentation' => [
         'PrestaShop/paymentexample',
@@ -74,6 +75,9 @@ const REPOSITORIES_CATEGORIES = [
         'PrestaShop/example_module_mailtheme',
         'PrestaShop/childtheme-example',
         'PrestaShop/module-companion',
+        'PrestaShop/user-documentation-1.6',
+        'PrestaShop/user-documentation-v8-fr',
+        'PrestaShop/user-documentation-v8-en',
     ],
     'themes' => [
         'PrestaShop/classic-theme',
@@ -202,6 +206,9 @@ const REPOSITORIES_CATEGORIES = [
         'PrestaShop/ps_googleanalytics',
         'PrestaShop/ps_themecusto',
         'PrestaShop/psgdpr',
+        'PrestaShop/ps_apiresources',
+        'PrestaShop/ps_distributionapiclient',
+        'PrestaShop/ps_fixturescreator',
     ],
     'tools' => [
         'PrestaShop/azure-template-basic',
@@ -228,13 +235,22 @@ const REPOSITORIES_CATEGORIES = [
         'PrestaShop/ps-monitor-module-releases',
         'PrestaShop/QANightlyResults',
         'PrestaShop/TopContributors',
+        'PrestaShop/TopTranslators',
         'PrestaShop/traces',
         'PrestaShop/travis-status-board',
         'PrestaShop/vagrant',
         'PrestaShop/kanbanbot',
+        'PrestaShop/psssst',
+        'PrestaShop/SeamlessUpgradeToolbox',
+    ],
+    'tests' => [
+        'PrestaShop/ui-testing-library',
+        'PrestaShop/ga.tests.ui.pr',
+    ],
+    'blog' => [
+        'PrestaShop/prestashop.github.io',
     ],
     'others' => [
-        'PrestaShop/prestashop.github.io',
         'PrestaShop/performance-project',
         'PrestaShop/engineering',
         'PrestaShop/.github',
