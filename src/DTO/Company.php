@@ -45,6 +45,7 @@ class Company
         public readonly array $employees,
         public readonly string $avatarUrl,
         public readonly string $htmlUrl,
+        public readonly ?string $githubUrl = null,
     ) {
         $this->slug = self::slugify($this->name);
     }
@@ -78,6 +79,7 @@ class Company
             'contributions_percent' => $this->contributionsPercent,
             'avatar_url' => $this->avatarUrl,
             'html_url' => $this->htmlUrl,
+            'github_url' => $this->githubUrl,
             'contributors' => array_values(array_unique($this->contributors)),
             'employees' => array_map(function (Employee $employee): array {
                 return [

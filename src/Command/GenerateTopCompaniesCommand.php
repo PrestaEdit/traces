@@ -126,6 +126,7 @@ class GenerateTopCompaniesCommand extends AbstractCommand
                 $employees,
                 $companyData['avatar_url'] ?? '',
                 $companyData['html_url'] ?? '',
+                $companyData['github_url'] ?? null,
             );
         }
 
