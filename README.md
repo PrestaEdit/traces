@@ -62,7 +62,7 @@ The authentication use a Github Token.
  $ php bin/console traces:generate:topsecurity --config="config.yml"
  ## A file top_security.json is generated
 
- # 11- Fetch QA label events (QA ✅ / QA by community ✅) from merged PRs
+ # 11- Fetch QA label events (QA ✔️ / QA ✔️ by Community) from merged PRs
  $ php bin/console traces:fetch:qaevents
  ## A file gh_qa_events.json is generated
 

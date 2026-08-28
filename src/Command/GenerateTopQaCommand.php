@@ -9,9 +9,9 @@ use Symfony\Component\Console\Output\OutputInterface;
 
 class GenerateTopQaCommand extends AbstractCommand
 {
-    private const LABEL_QA = 'QA ✅';
+    private const LABEL_QA = 'QA ✔️';
 
-    private const LABEL_QA_COMMUNITY = 'QA by community ✅';
+    private const LABEL_QA_COMMUNITY = 'QA ✔️ by Community';
 
     protected function configure(): void
     {

@@ -8,7 +8,7 @@ use Symfony\Component\Console\Output\OutputInterface;
 
 class FetchQaEventsCommand extends AbstractCommand
 {
-    private const QA_LABELS = ['QA ✅', 'QA by community ✅'];
+    private const QA_LABELS = ['QA ✔️', 'QA ✔️ by Community'];
 
     protected function configure(): void
     {
@@ -27,12 +27,25 @@ class FetchQaEventsCommand extends AbstractCommand
     {
         parent::execute($input, $output);
 
+        if (!file_exists(self::FILE_REPOSITORIES)) {
+            $this->output->writeLn(self::FILE_REPOSITORIES . ' is missing. Please execute `php bin/console traces:fetch:repositories`');
+
+            return 1;
+        }
+
+        $repositories = json_decode(file_get_contents(self::FILE_REPOSITORIES) ?: '', true);
         $time = time();
         $events = [];
 
         foreach (self::QA_LABELS as $label) {
             $this->output->writeLn(['', 'Label: ' . $label]);
-            $events = array_merge($events, $this->fetchLabelEvents($label));
+            foreach ($repositories as $repository) {
+                $repoEvents = $this->fetchLabelEventsForRepo($label, $repository);
+                if (count($repoEvents) > 0) {
+                    $this->output->writeLn(['  PrestaShop/' . $repository . ': ' . count($repoEvents) . ' events']);
+                }
+                $events = array_merge($events, $repoEvents);
+            }
         }
 
         $events = $this->dedup($events);
@@ -47,10 +60,18 @@ class FetchQaEventsCommand extends AbstractCommand
         return 0;
     }
 
-    private function fetchLabelEvents(string $label): array
+    /**
+     * Search PRs by label WITHIN a single repository. The GitHub search API
+     * caps results at 1000 per query — segmenting by repo keeps every module
+     * well under that ceiling (the only volume risk was the core repo, which
+     * does not use these labels).
+     *
+     * @return array<array{repo:string, pr_number:int, actor:string, label:string, createdAt:string}>
+     */
+    private function fetchLabelEventsForRepo(string $label, string $repository): array
     {
         $labelEscaped = str_replace('"', '\\"', $label);
-        $queryTpl = 'search(query: "label:\"' . $labelEscaped . '\" is:pr is:merged org:PrestaShop", type: ISSUE, first: 100, after: %s) {
+        $queryTpl = 'search(query: "repo:PrestaShop/' . $repository . ' label:\"' . $labelEscaped . '\" is:pr is:merged", type: ISSUE, first: 100, after: %s) {
             pageInfo { endCursor hasNextPage }
             nodes {
                 ... on PullRequest {
@@ -75,7 +96,6 @@ class FetchQaEventsCommand extends AbstractCommand
             $data = $this->github->apiSearchGraphQL('query { ' . sprintf($queryTpl, $after) . ' }');
             $search = $data['data']['search'] ?? null;
             if ($search === null) {
-                $this->output->writeLn(['  GraphQL returned no data for label ' . $label]);
                 break;
             }
             foreach ($search['nodes'] as $pr) {
@@ -100,7 +120,6 @@ class FetchQaEventsCommand extends AbstractCommand
             }
             $endCursor = $search['pageInfo']['endCursor'] ?? null;
             $after = $endCursor === null ? 'null' : '"' . $endCursor . '"';
-            $this->output->writeLn(['  page fetched — running total for label: ' . count($events)]);
         } while (($search['pageInfo']['hasNextPage'] ?? false) === true);
 
         return $events;
