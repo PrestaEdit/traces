@@ -9,9 +9,32 @@ use Symfony\Component\Console\Output\OutputInterface;
 
 class GenerateTopQaCommand extends AbstractCommand
 {
-    private const LABEL_QA = 'QA ✔️';
+    /**
+     * Labels that EXPLICITLY declare a community-led validation. When the
+     * label carries the signal, we trust it — no company lookup needed.
+     */
+    private const COMMUNITY_LABELS = [
+        'QA ✔️ by Community',
+        'QA by Community ✓',
+    ];
 
-    private const LABEL_QA_COMMUNITY = 'QA ✔️ by Community';
+    /**
+     * Labels that EXPLICITLY declare an internal (dev/team) validation.
+     */
+    private const DEV_LABELS = [
+        'QA by Dev ✓',
+        'QA by dev ✔️',
+    ];
+
+    /**
+     * Every OTHER tracked label is neutral (`QA ✔️`, `QA ✓`, `QA :heavy_check_mark:`,
+     * etc.). On modules these are used by both team members and community
+     * reviewers indistinguishably, so we fall back to whether the actor was
+     * a PrestaShop employee AT THE TIME of the event (via the employees map
+     * in var/data/companies.json). Historic PRs stay attributed correctly
+     * even if the employee has since left.
+     */
+    private const INTERNAL_CANONICAL_COMPANY = 'PrestaShop';
 
     protected function configure(): void
     {
@@ -48,7 +71,9 @@ class GenerateTopQaCommand extends AbstractCommand
             ? json_decode(file_get_contents(self::FILE_CONTRIBUTORS_PRS) ?: '', true)
             : [];
 
-        file_put_contents(self::FILE_TOP_QA, json_encode($this->buildRanking($events, $contributors), JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
+        $employeeStints = $this->loadInternalEmployeeStints();
+
+        file_put_contents(self::FILE_TOP_QA, json_encode($this->buildRanking($events, $contributors, $employeeStints), JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
 
         $this->output->writeLn(['', 'Top QA generated.']);
 
@@ -58,10 +83,11 @@ class GenerateTopQaCommand extends AbstractCommand
     /**
      * @param array<array{repo:string, pr_number:int, actor:string, label:string, createdAt:string}> $events
      * @param array<string, mixed> $contributors
+     * @param array<string, array<array{startDate:string, endDate:string}>> $employeeStints login -> employment periods at PrestaShop
      *
      * @return array{updatedAt: string, items: array<array{rank:int, login:string, name:string, avatar_url:string, html_url:string, count:int, qa:int, qa_community:int}>}
      */
-    public function buildRanking(array $events, array $contributors): array
+    public function buildRanking(array $events, array $contributors, array $employeeStints = []): array
     {
         $counts = [];
         foreach ($events as $ev) {
@@ -71,12 +97,25 @@ class GenerateTopQaCommand extends AbstractCommand
                 continue;
             }
             if (!isset($counts[$login])) {
-                $counts[$login] = ['qa' => 0, 'qa_community' => 0];
+                $counts[$login] = [
+                    'qa' => 0, 'qa_community' => 0,
+                    'countByYear' => [], 'qaByYear' => [], 'qaCommunityByYear' => [],
+                ];
             }
-            if ($label === self::LABEL_QA) {
-                ++$counts[$login]['qa'];
-            } elseif ($label === self::LABEL_QA_COMMUNITY) {
+            $year = $this->extractYear($ev['createdAt'] ?? null);
+            $isCommunity = $this->isCommunityEvent($label, $login, $ev['createdAt'] ?? null, $employeeStints);
+            if ($isCommunity) {
                 ++$counts[$login]['qa_community'];
+            } else {
+                ++$counts[$login]['qa'];
+            }
+            if ($year !== null) {
+                $counts[$login]['countByYear'][$year] = ($counts[$login]['countByYear'][$year] ?? 0) + 1;
+                if ($isCommunity) {
+                    $counts[$login]['qaCommunityByYear'][$year] = ($counts[$login]['qaCommunityByYear'][$year] ?? 0) + 1;
+                } else {
+                    $counts[$login]['qaByYear'][$year] = ($counts[$login]['qaByYear'][$year] ?? 0) + 1;
+                }
             }
         }
 
@@ -104,6 +143,15 @@ class GenerateTopQaCommand extends AbstractCommand
             }
 
             $total = $counts[$login]['qa'] + $counts[$login]['qa_community'];
+            // Sort year maps descending — same convention as top_security's byYear
+            // sub-maps, so consumers can display the most recent year first.
+            $countByYear = $counts[$login]['countByYear'];
+            $qaByYear = $counts[$login]['qaByYear'];
+            $qaCommunityByYear = $counts[$login]['qaCommunityByYear'];
+            krsort($countByYear);
+            krsort($qaByYear);
+            krsort($qaCommunityByYear);
+
             $items[] = [
                 'rank' => $rank,
                 'login' => $login,
@@ -111,13 +159,114 @@ class GenerateTopQaCommand extends AbstractCommand
                 'avatar_url' => (string) ($contributor['avatar_url'] ?? ''),
                 'html_url' => (string) ($contributor['html_url'] ?? 'https://github.com/' . $login),
                 'count' => $total,
+                'countByYear' => $countByYear,
                 'qa' => $counts[$login]['qa'],
+                'qaByYear' => $qaByYear,
                 'qa_community' => $counts[$login]['qa_community'],
+                'qaCommunityByYear' => $qaCommunityByYear,
             ];
             ++$rank;
         }
 
         return ['updatedAt' => (new DateTimeImmutable())->format(DATE_ATOM), 'items' => $items];
+    }
+
+    /**
+     * Hybrid rule. When the label explicitly declares its origin (Community
+     * or Dev), trust it. Otherwise (neutral label used on modules for both
+     * kinds of validators), check whether the actor was a PrestaShop
+     * employee at the time of the event (via var/data/companies.json).
+     * Time-aware: historic events by someone who has since left the company
+     * still count as internal.
+     *
+     * @param array<string, array<array{startDate:string, endDate:string}>> $employeeStints
+     */
+    private function isCommunityEvent(string $label, string $login, ?string $createdAt, array $employeeStints): bool
+    {
+        if (in_array($label, self::COMMUNITY_LABELS, true)) {
+            return true;
+        }
+        if (in_array($label, self::DEV_LABELS, true)) {
+            return false;
+        }
+
+        $stints = $employeeStints[$login] ?? null;
+        if (!is_array($stints) || $stints === []) {
+            // Not listed as an internal employee at any time — treat as
+            // community. The default under-counts internal (unlisted team
+            // members) rather than over-attributing to the team.
+            return true;
+        }
+
+        $eventTs = ($createdAt !== null && $createdAt !== '') ? strtotime($createdAt) : false;
+        // Undated event: if the actor was ever a PrestaShop employee, credit
+        // it as internal — better than dropping the internal signal entirely.
+        if ($eventTs === false) {
+            return false;
+        }
+
+        foreach ($stints as $stint) {
+            $start = strtotime($stint['startDate'] ?? '');
+            if ($start === false) {
+                continue;
+            }
+            $rawEnd = $stint['endDate'] ?? '';
+            // Empty endDate = currently employed.
+            $end = ($rawEnd === '') ? PHP_INT_MAX : strtotime($rawEnd);
+            if ($end === false) {
+                continue;
+            }
+            if ($eventTs >= $start && $eventTs <= $end) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Load the employees map for the internal PrestaShop company from
+     * var/data/companies.json. Returns login -> list of employment stints.
+     *
+     * @return array<string, array<array{startDate:string, endDate:string}>>
+     */
+    private function loadInternalEmployeeStints(): array
+    {
+        if (!file_exists(self::FILE_DATA_COMPANIES)) {
+            return [];
+        }
+        /** @var array<array{name?:string, employees?:array<string, array<array{startDate:string, endDate:string}>>}>|null $companies */
+        $companies = json_decode(file_get_contents(self::FILE_DATA_COMPANIES) ?: '', true);
+        if (!is_array($companies)) {
+            return [];
+        }
+        foreach ($companies as $company) {
+            if (($company['name'] ?? null) === self::INTERNAL_CANONICAL_COMPANY) {
+                $employees = $company['employees'] ?? [];
+
+                return is_array($employees) ? $employees : [];
+            }
+        }
+
+        return [];
+    }
+
+    /**
+     * Best-effort year extraction from an ISO-8601 createdAt. A malformed or
+     * missing value returns null — the caller then skips the year bump but
+     * still counts the scalar (same policy as GenerateTopSecurityCommand).
+     */
+    private function extractYear(?string $rawDate): ?string
+    {
+        if ($rawDate === null || $rawDate === '') {
+            return null;
+        }
+        $ts = strtotime($rawDate);
+        if ($ts === false) {
+            return null;
+        }
+
+        return date('Y', $ts);
     }
 
     /**

@@ -8,7 +8,25 @@ use Symfony\Component\Console\Output\OutputInterface;
 
 class FetchQaEventsCommand extends AbstractCommand
 {
-    private const QA_LABELS = ['QA ✔️', 'QA ✔️ by Community'];
+    /**
+     * Every label variant used across the org that signals a QA validation.
+     * Discovered by scanning every repo's label list — the naming has drifted
+     * over time (different check marks, unrendered emoji codes, "by Dev" vs
+     * "by Community", etc.). We keep them all here and bucket them into
+     * `qa` / `qa_community` in GenerateTopQaCommand.
+     */
+    private const QA_LABELS = [
+        'QA ✔️',
+        'QA ✔️ by Community',
+        'QA ✓',
+        'QA by Community ✓',
+        'QA by Dev ✓',
+        'QA by dev ✔️',
+        'QA with AI ✓',
+        'QA :heavy_check_mark:',
+        'QA :white_check_mark:',
+        'QA approved',
+    ];
 
     protected function configure(): void
     {
