@@ -6,6 +6,7 @@ use DateTimeImmutable;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
+use Throwable;
 
 class GenerateTopQaCommand extends AbstractCommand
 {
@@ -81,9 +82,9 @@ class GenerateTopQaCommand extends AbstractCommand
     }
 
     /**
-     * @param array<array{repo:string, pr_number:int, actor:string, label:string, createdAt:string}> $events
+     * @param array<int, array<string, mixed>> $events raw event rows from gh_qa_events.json — keys are not statically guaranteed
      * @param array<string, mixed> $contributors
-     * @param array<string, array<array{startDate:string, endDate:string}>> $employeeStints login -> employment periods at PrestaShop
+     * @param array<string, mixed> $employeeStints login -> raw employment periods at PrestaShop (isCommunityEvent validates the shape)
      *
      * @return array{updatedAt: string, items: array<array{rank:int, login:string, name:string, avatar_url:string, html_url:string, count:int, qa:int, qa_community:int}>}
      */
@@ -91,19 +92,23 @@ class GenerateTopQaCommand extends AbstractCommand
     {
         $counts = [];
         foreach ($events as $ev) {
-            $login = $ev['actor'] ?? '';
-            $label = $ev['label'] ?? '';
-            if ($login === '') {
+            $rawLogin = $ev['actor'] ?? null;
+            $rawLabel = $ev['label'] ?? null;
+            $rawCreated = $ev['createdAt'] ?? null;
+            if (!is_string($rawLogin) || $rawLogin === '') {
                 continue;
             }
+            $login = $rawLogin;
+            $label = is_string($rawLabel) ? $rawLabel : '';
+            $createdAt = is_string($rawCreated) ? $rawCreated : null;
             if (!isset($counts[$login])) {
                 $counts[$login] = [
                     'qa' => 0, 'qa_community' => 0,
                     'countByYear' => [], 'qaByYear' => [], 'qaCommunityByYear' => [],
                 ];
             }
-            $year = $this->extractYear($ev['createdAt'] ?? null);
-            $isCommunity = $this->isCommunityEvent($label, $login, $ev['createdAt'] ?? null, $employeeStints);
+            $year = $this->extractYear($createdAt);
+            $isCommunity = $this->isCommunityEvent($label, $login, $createdAt, $employeeStints);
             if ($isCommunity) {
                 ++$counts[$login]['qa_community'];
             } else {
@@ -179,7 +184,7 @@ class GenerateTopQaCommand extends AbstractCommand
      * Time-aware: historic events by someone who has since left the company
      * still count as internal.
      *
-     * @param array<string, array<array{startDate:string, endDate:string}>> $employeeStints
+     * @param array<string, mixed> $employeeStints login -> raw stints array (validated inline)
      */
     private function isCommunityEvent(string $label, string $login, ?string $createdAt, array $employeeStints): bool
     {
@@ -206,11 +211,18 @@ class GenerateTopQaCommand extends AbstractCommand
         }
 
         foreach ($stints as $stint) {
-            $start = strtotime($stint['startDate'] ?? '');
+            if (!is_array($stint)) {
+                continue;
+            }
+            $rawStart = $stint['startDate'] ?? '';
+            $rawEnd = $stint['endDate'] ?? '';
+            if (!is_string($rawStart) || !is_string($rawEnd)) {
+                continue;
+            }
+            $start = strtotime($rawStart);
             if ($start === false) {
                 continue;
             }
-            $rawEnd = $stint['endDate'] ?? '';
             // Empty endDate = currently employed.
             $end = ($rawEnd === '') ? PHP_INT_MAX : strtotime($rawEnd);
             if ($end === false) {
@@ -228,24 +240,24 @@ class GenerateTopQaCommand extends AbstractCommand
      * Load the employees map for the internal PrestaShop company from
      * var/data/companies.json. Returns login -> list of employment stints.
      *
-     * @return array<string, array<array{startDate:string, endDate:string}>>
+     * @return array<string, mixed> login -> raw stints (shape validated in isCommunityEvent)
      */
     private function loadInternalEmployeeStints(): array
     {
         if (!file_exists(self::FILE_DATA_COMPANIES)) {
             return [];
         }
-        /** @var array<array{name?:string, employees?:array<string, array<array{startDate:string, endDate:string}>>}>|null $companies */
         $companies = json_decode(file_get_contents(self::FILE_DATA_COMPANIES) ?: '', true);
         if (!is_array($companies)) {
             return [];
         }
         foreach ($companies as $company) {
-            if (($company['name'] ?? null) === self::INTERNAL_CANONICAL_COMPANY) {
-                $employees = $company['employees'] ?? [];
-
-                return is_array($employees) ? $employees : [];
+            if (!is_array($company) || ($company['name'] ?? null) !== self::INTERNAL_CANONICAL_COMPANY) {
+                continue;
             }
+            $employees = $company['employees'] ?? [];
+
+            return is_array($employees) ? $employees : [];
         }
 
         return [];
@@ -283,7 +295,7 @@ class GenerateTopQaCommand extends AbstractCommand
         }
         try {
             $user = $this->github->getUser($login);
-        } catch (\Throwable $e) {
+        } catch (Throwable $e) {
             $this->output->writeLn(['  Failed to resolve GitHub user ' . $login . ': ' . $e->getMessage()]);
 
             return $cache[$login] = [];

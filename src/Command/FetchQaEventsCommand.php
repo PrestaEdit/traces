@@ -143,6 +143,11 @@ class FetchQaEventsCommand extends AbstractCommand
         return $events;
     }
 
+    /**
+     * @param array<int, array{repo:string, pr_number:int, actor:string, label:string, createdAt:string}> $events
+     *
+     * @return array<string, array{repo:string, pr_number:int, actor:string, label:string, createdAt:string}>
+     */
     private function dedup(array $events): array
     {
         $keyed = [];
